@@ -34,3 +34,8 @@ The local environment must be configured with either:
 - GitHub CLI (`gh`) or a token-enabled workflow.
 
 Without those, automation can prepare commits and PR metadata but cannot push/open PRs directly on GitHub.
+
+## Forbidden commit guard
+
+CI blocks ancestry that includes commit `ad3fc96d779c00aded0206e3a7c11b9cbb50795a`.
+If that commit appears upstream, rebase/cherry-pick onto a clean branch from `main` and reopen/update the PR.

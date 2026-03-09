@@ -25,6 +25,14 @@ jobs:
           java-version: "17"
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+      - name: Guard against forbidden commit ancestry
+        run: |
+          BAD_COMMIT="ad3fc96d779c00aded0206e3a7c11b9cbb50795a"
+          if git merge-base --is-ancestor "$BAD_COMMIT" HEAD 2>/dev/null; then
+            echo "Forbidden commit $BAD_COMMIT found in branch ancestry"
+            exit 1
+          fi
+          echo "Forbidden commit not present in ancestry"
       - name: Build debug APK
         run: gradle :app:assembleDebug
       - name: Run unit tests
@@ -46,6 +54,15 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Guard against forbidden commit ancestry
+        run: |
+          BAD_COMMIT="ad3fc96d779c00aded0206e3a7c11b9cbb50795a"
+          if git merge-base --is-ancestor "$BAD_COMMIT" HEAD 2>/dev/null; then
+            echo "Forbidden commit $BAD_COMMIT found in branch ancestry"
+            exit 1
+          fi
+          echo "Forbidden commit not present in ancestry"
 
       - name: Build debug APK
         run: gradle :app:assembleDebug
