@@ -43,3 +43,14 @@ gradle :app:testDebugUnitTest
 2. Merge to your target branch.
 3. Create and push a tag like `v0.2.0`.
 4. Workflow builds APK and uploads it to GitHub Release assets.
+
+## GitHub access expectations
+
+This project can be prepared locally (commits + PR metadata), but direct GitHub operations require environment setup:
+
+- `origin` remote configured for this repository
+- credentials/token with push + PR permissions
+- optional: GitHub CLI (`gh`) installed and authenticated
+
+If those are missing, the code can still be fully prepared and validated locally/CI, then pushed from a configured machine.
+
