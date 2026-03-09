@@ -16,6 +16,7 @@ import androidx.core.content.getSystemService
 class TeslaBleManager(
     private val context: Context,
     private val onStatus: (String) -> Unit,
+    private val onVitals: (TeslaBleProtocol.VehicleVitals) -> Unit,
 ) {
     private val bluetoothAdapter: BluetoothAdapter? =
         context.getSystemService<BluetoothManager>()?.adapter
@@ -68,12 +69,51 @@ class TeslaBleManager(
     }
 
     @SuppressLint("MissingPermission")
+    fun requestVitals() {
+        val command = TeslaBleProtocol.buildVitalsRequest()
+        sendCommand(command, "Requested vehicle vitals", "Failed to request vehicle vitals")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun setChargingCurrent(targetCurrentAmps: Int) {
+        val command = TeslaBleProtocol.buildSetChargingCurrentRequest(targetCurrentAmps)
+        sendCommand(command, "Set charging current to ${command[1].toInt()}A", "Failed to set charging current")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun setChargingCurrentFromGrid(gridVoltageV: Float, setPointWatts: Int): Int {
+        val calculatedAmps = TeslaBleProtocol.calculateTargetCurrentFromGrid(gridVoltageV, setPointWatts)
+        setChargingCurrent(calculatedAmps)
+        return calculatedAmps
+    }
+
+    @SuppressLint("MissingPermission")
     fun close() {
         val scanner = bluetoothAdapter?.bluetoothLeScanner
         scanCallback?.let { scanner?.stopScan(it) }
         scanCallback = null
         gatt?.close()
         gatt = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendCommand(payload: ByteArray, successMessage: String, failureMessage: String) {
+        val activeGatt = gatt
+        if (activeGatt == null) {
+            onStatus("Not connected")
+            return
+        }
+
+        val service = activeGatt.getService(TeslaBleProtocol.serviceUuid)
+        val writeChar = service?.getCharacteristic(TeslaBleProtocol.toVehicleCharacteristicUuid)
+        if (writeChar == null) {
+            onStatus("Tesla write characteristic not found")
+            return
+        }
+
+        writeChar.value = payload
+        val writeOk = activeGatt.writeCharacteristic(writeChar)
+        onStatus(if (writeOk) successMessage else failureMessage)
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -109,6 +149,26 @@ class TeslaBleManager(
             writeChar.value = authFrame
             val writeOk = gatt.writeCharacteristic(writeChar)
             onStatus(if (writeOk) "Auth frame sent" else "Failed to send auth frame")
+
+            val readChar = service.getCharacteristic(TeslaBleProtocol.fromVehicleCharacteristicUuid)
+            if (readChar != null) {
+                gatt.setCharacteristicNotification(readChar, true)
+            }
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+        ) {
+            if (characteristic.uuid != TeslaBleProtocol.fromVehicleCharacteristicUuid) {
+                return
+            }
+            val vitals = TeslaBleProtocol.parseVitalsNotification(value)
+            if (vitals != null) {
+                onVitals(vitals)
+                onStatus("Vitals updated")
+            }
         }
     }
 }

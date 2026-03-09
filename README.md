@@ -8,7 +8,7 @@ Android app scaffold to discover a Tesla over BLE, connect, and send an initial 
 - Tesla-targeted BLE scan (service UUID and name heuristic).
 - BLE GATT connect + service discovery.
 - Initial authentication frame write pathway for Tesla command channel.
-- GitHub Actions workflow to build debug APK and publish release APK artifact on tag.
+- GitHub Actions workflow to build debug APK on PRs and publish release APK artifact on tag.
 
 ## What still needs production hardening
 
@@ -17,6 +17,7 @@ Android app scaffold to discover a Tesla over BLE, connect, and send an initial 
 - Implement challenge/response signing flow and session management.
 - Parse notifications from the vehicle and handle retries / reconnects.
 - Add command layer (unlock, climate, trunk, etc.) with user consent and auditing.
+- Replace simplified vitals/current payloads with official Tesla protobuf command contracts.
 
 ## Local build
 
