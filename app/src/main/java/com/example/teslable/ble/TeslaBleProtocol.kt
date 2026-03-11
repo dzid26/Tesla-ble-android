@@ -2,6 +2,7 @@ package com.example.teslable.ble
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -44,6 +45,25 @@ object TeslaBleProtocol {
         }
         val calculatedAmps = (setPointWatts / gridVoltageV).roundToInt()
         return calculatedAmps.coerceIn(MIN_CHARGE_AMPS, MAX_CHARGE_AMPS)
+    }
+
+    fun guessBleNamesFromVin(vin: String): List<String> {
+        val normalizedVin = vin.trim().uppercase(Locale.US)
+        if (normalizedVin.length < 6) {
+            return emptyList()
+        }
+
+        val tail6 = normalizedVin.takeLast(6)
+        val tail5 = normalizedVin.takeLast(5)
+
+        return listOf(
+            "S$tail6",
+            "TESLA-$tail6",
+            "TESLA_$tail6",
+            "MODEL-$tail6",
+            "VEHICLE-$tail6",
+            "S$tail5",
+        ).distinct()
     }
 
     fun parseVitalsNotification(payload: ByteArray): VehicleVitals? {

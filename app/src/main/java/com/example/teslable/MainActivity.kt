@@ -42,11 +42,18 @@ class MainActivity : AppCompatActivity() {
 
         binding.scanButton.setOnClickListener {
             ensureBlePermissions()
-            bleManager.scanForTesla { device ->
-                runOnUiThread {
-                    binding.deviceText.text = "Selected: ${device.name ?: "Tesla"} (${device.address})"
-                    binding.connectButton.isEnabled = true
-                }
+            bleManager.scanForTesla(binding.vinInput.text.toString()) { device ->
+                runOnUiThread { setSelectedDevice(device.name ?: "Tesla", device.address) }
+            }
+        }
+
+        binding.vinGuessButton.setOnClickListener {
+            ensureBlePermissions()
+            val matched = bleManager.connectUsingVinGuess(binding.vinInput.text.toString()) { device ->
+                runOnUiThread { setSelectedDevice(device.name ?: "Tesla", device.address) }
+            }
+            if (!matched) {
+                binding.statusText.text = "VIN guess did not resolve a bonded device; scan near vehicle."
             }
         }
 
@@ -74,6 +81,11 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         bleManager.close()
         super.onDestroy()
+    }
+
+    private fun setSelectedDevice(deviceName: String, address: String) {
+        binding.deviceText.text = "Selected: $deviceName ($address)"
+        binding.connectButton.isEnabled = true
     }
 
     private fun ensureBlePermissions() {

@@ -5,7 +5,7 @@ Android app scaffold to discover a Tesla over BLE, connect, and send an initial 
 ## What is implemented
 
 - BLE permission handling for Android 8+ / 12+.
-- Tesla-targeted BLE scan (service UUID and name heuristic).
+- Tesla-targeted BLE scan (service UUID and name heuristic), with optional VIN-derived name guesses.
 - BLE GATT connect + service discovery.
 - Initial authentication frame write pathway for Tesla command channel.
 - GitHub Actions workflow to build debug APK on PRs and publish release APK artifact on tag.

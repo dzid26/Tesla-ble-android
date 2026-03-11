@@ -12,6 +12,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
 import androidx.core.content.getSystemService
+import java.util.Locale
 
 class TeslaBleManager(
     private val context: Context,
@@ -26,23 +27,34 @@ class TeslaBleManager(
     private var gatt: BluetoothGatt? = null
 
     @SuppressLint("MissingPermission")
-    fun scanForTesla(onDeviceFound: (BluetoothDevice) -> Unit) {
+    fun scanForTesla(vin: String?, onDeviceFound: (BluetoothDevice) -> Unit) {
         val scanner = bluetoothAdapter?.bluetoothLeScanner
         if (scanner == null) {
             onStatus("Bluetooth LE scanner unavailable")
             return
         }
 
-        onStatus("Scanning for Tesla BLE service...")
+        val vinCandidates = TeslaBleProtocol.guessBleNamesFromVin(vin.orEmpty())
+        if (vinCandidates.isNotEmpty()) {
+            onStatus("Scanning for Tesla BLE service or VIN names: ${vinCandidates.joinToString()}")
+        } else {
+            onStatus("Scanning for Tesla BLE service...")
+        }
+
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val deviceName = result.device.name.orEmpty()
                 val hasTeslaService = result.scanRecord?.serviceUuids
                     ?.any { it.uuid == TeslaBleProtocol.serviceUuid } == true
-                val looksLikeTeslaName = result.device.name?.contains("Tesla", ignoreCase = true) == true
-                if (hasTeslaService || looksLikeTeslaName) {
+                val looksLikeTeslaName = deviceName.contains("Tesla", ignoreCase = true)
+                val matchesVinGuess = vinCandidates.any { candidate ->
+                    deviceName.equals(candidate, ignoreCase = true)
+                }
+
+                if (hasTeslaService || looksLikeTeslaName || matchesVinGuess) {
                     selectedDevice = result.device
                     scanner.stopScan(this)
-                    onStatus("Tesla found: ${result.device.address}")
+                    onStatus("Tesla candidate found: ${result.device.name ?: "Unknown"} ${result.device.address}")
                     onDeviceFound(result.device)
                 }
             }
@@ -54,6 +66,32 @@ class TeslaBleManager(
 
         scanCallback = callback
         scanner.startScan(callback)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connectUsingVinGuess(vin: String, onDeviceFound: (BluetoothDevice) -> Unit): Boolean {
+        val adapter = bluetoothAdapter ?: return false
+        val candidates = TeslaBleProtocol.guessBleNamesFromVin(vin)
+        if (candidates.isEmpty()) {
+            onStatus("Enter full VIN to guess BLE name")
+            return false
+        }
+
+        val normalizedCandidates = candidates.map { it.uppercase(Locale.US) }
+        val bondedMatch = adapter.bondedDevices.firstOrNull { device ->
+            val name = device.name?.uppercase(Locale.US) ?: return@firstOrNull false
+            normalizedCandidates.contains(name)
+        }
+
+        if (bondedMatch != null) {
+            selectedDevice = bondedMatch
+            onStatus("Using bonded device guess: ${bondedMatch.name} ${bondedMatch.address}")
+            onDeviceFound(bondedMatch)
+            return true
+        }
+
+        onStatus("No bonded VIN match. Run scan near vehicle to discover private BLE name.")
+        return false
     }
 
     @SuppressLint("MissingPermission")

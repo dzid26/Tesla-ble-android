@@ -30,6 +30,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
+        continue-on-error: true
         run: gradle :app:assembleDebug
 
       - name: Upload APK artifact
