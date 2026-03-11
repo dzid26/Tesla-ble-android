@@ -12,10 +12,12 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.Context
 import androidx.core.content.getSystemService
+import java.util.Locale
 
 class TeslaBleManager(
     private val context: Context,
     private val onStatus: (String) -> Unit,
+    private val onVitals: (TeslaBleProtocol.VehicleVitals) -> Unit,
 ) {
     private val bluetoothAdapter: BluetoothAdapter? =
         context.getSystemService<BluetoothManager>()?.adapter
@@ -25,23 +27,34 @@ class TeslaBleManager(
     private var gatt: BluetoothGatt? = null
 
     @SuppressLint("MissingPermission")
-    fun scanForTesla(onDeviceFound: (BluetoothDevice) -> Unit) {
+    fun scanForTesla(vin: String?, onDeviceFound: (BluetoothDevice) -> Unit) {
         val scanner = bluetoothAdapter?.bluetoothLeScanner
         if (scanner == null) {
             onStatus("Bluetooth LE scanner unavailable")
             return
         }
 
-        onStatus("Scanning for Tesla BLE service...")
+        val vinCandidates = TeslaBleProtocol.guessBleNamesFromVin(vin.orEmpty())
+        if (vinCandidates.isNotEmpty()) {
+            onStatus("Scanning for Tesla BLE service or VIN names: ${vinCandidates.joinToString()}")
+        } else {
+            onStatus("Scanning for Tesla BLE service...")
+        }
+
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val deviceName = result.device.name.orEmpty()
                 val hasTeslaService = result.scanRecord?.serviceUuids
                     ?.any { it.uuid == TeslaBleProtocol.serviceUuid } == true
-                val looksLikeTeslaName = result.device.name?.contains("Tesla", ignoreCase = true) == true
-                if (hasTeslaService || looksLikeTeslaName) {
+                val looksLikeTeslaName = deviceName.contains("Tesla", ignoreCase = true)
+                val matchesVinGuess = vinCandidates.any { candidate ->
+                    deviceName.equals(candidate, ignoreCase = true)
+                }
+
+                if (hasTeslaService || looksLikeTeslaName || matchesVinGuess) {
                     selectedDevice = result.device
                     scanner.stopScan(this)
-                    onStatus("Tesla found: ${result.device.address}")
+                    onStatus("Tesla candidate found: ${result.device.name ?: "Unknown"} ${result.device.address}")
                     onDeviceFound(result.device)
                 }
             }
@@ -53,6 +66,32 @@ class TeslaBleManager(
 
         scanCallback = callback
         scanner.startScan(callback)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connectUsingVinGuess(vin: String, onDeviceFound: (BluetoothDevice) -> Unit): Boolean {
+        val adapter = bluetoothAdapter ?: return false
+        val candidates = TeslaBleProtocol.guessBleNamesFromVin(vin)
+        if (candidates.isEmpty()) {
+            onStatus("Enter full VIN to guess BLE name")
+            return false
+        }
+
+        val normalizedCandidates = candidates.map { it.uppercase(Locale.US) }
+        val bondedMatch = adapter.bondedDevices.firstOrNull { device ->
+            val name = device.name?.uppercase(Locale.US) ?: return@firstOrNull false
+            normalizedCandidates.contains(name)
+        }
+
+        if (bondedMatch != null) {
+            selectedDevice = bondedMatch
+            onStatus("Using bonded device guess: ${bondedMatch.name} ${bondedMatch.address}")
+            onDeviceFound(bondedMatch)
+            return true
+        }
+
+        onStatus("No bonded VIN match. Run scan near vehicle to discover private BLE name.")
+        return false
     }
 
     @SuppressLint("MissingPermission")
@@ -68,12 +107,51 @@ class TeslaBleManager(
     }
 
     @SuppressLint("MissingPermission")
+    fun requestVitals() {
+        val command = TeslaBleProtocol.buildVitalsRequest()
+        sendCommand(command, "Requested vehicle vitals", "Failed to request vehicle vitals")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun setChargingCurrent(targetCurrentAmps: Int) {
+        val command = TeslaBleProtocol.buildSetChargingCurrentRequest(targetCurrentAmps)
+        sendCommand(command, "Set charging current to ${command[1].toInt()}A", "Failed to set charging current")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun setChargingCurrentFromGrid(gridVoltageV: Float, setPointWatts: Int): Int {
+        val calculatedAmps = TeslaBleProtocol.calculateTargetCurrentFromGrid(gridVoltageV, setPointWatts)
+        setChargingCurrent(calculatedAmps)
+        return calculatedAmps
+    }
+
+    @SuppressLint("MissingPermission")
     fun close() {
         val scanner = bluetoothAdapter?.bluetoothLeScanner
         scanCallback?.let { scanner?.stopScan(it) }
         scanCallback = null
         gatt?.close()
         gatt = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun sendCommand(payload: ByteArray, successMessage: String, failureMessage: String) {
+        val activeGatt = gatt
+        if (activeGatt == null) {
+            onStatus("Not connected")
+            return
+        }
+
+        val service = activeGatt.getService(TeslaBleProtocol.serviceUuid)
+        val writeChar = service?.getCharacteristic(TeslaBleProtocol.toVehicleCharacteristicUuid)
+        if (writeChar == null) {
+            onStatus("Tesla write characteristic not found")
+            return
+        }
+
+        writeChar.value = payload
+        val writeOk = activeGatt.writeCharacteristic(writeChar)
+        onStatus(if (writeOk) successMessage else failureMessage)
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -109,6 +187,26 @@ class TeslaBleManager(
             writeChar.value = authFrame
             val writeOk = gatt.writeCharacteristic(writeChar)
             onStatus(if (writeOk) "Auth frame sent" else "Failed to send auth frame")
+
+            val readChar = service.getCharacteristic(TeslaBleProtocol.fromVehicleCharacteristicUuid)
+            if (readChar != null) {
+                gatt.setCharacteristicNotification(readChar, true)
+            }
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+        ) {
+            if (characteristic.uuid != TeslaBleProtocol.fromVehicleCharacteristicUuid) {
+                return
+            }
+            val vitals = TeslaBleProtocol.parseVitalsNotification(value)
+            if (vitals != null) {
+                onVitals(vitals)
+                onStatus("Vitals updated")
+            }
         }
     }
 }
